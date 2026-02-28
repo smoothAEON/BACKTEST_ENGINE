@@ -478,6 +478,10 @@ class PositionRecord:
     realized_pips: float = 0.0
     holding_minutes: float = 0.0
     fees_usd: float = 0.0
+    mae_pips: float = 0.0
+    mfe_pips: float = 0.0
+    mae_pnl_usd: float = 0.0
+    mfe_pnl_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -497,6 +501,10 @@ class PositionRecord:
             "realized_pips": float(self.realized_pips),
             "holding_minutes": float(self.holding_minutes),
             "fees_usd": float(self.fees_usd),
+            "mae_pips": float(self.mae_pips),
+            "mfe_pips": float(self.mfe_pips),
+            "mae_pnl_usd": float(self.mae_pnl_usd),
+            "mfe_pnl_usd": float(self.mfe_pnl_usd),
         }
 
 
@@ -658,6 +666,10 @@ class TradeView:
     holding_minutes: float
     fees_usd: float
     reason: str
+    mae_pips: float = 0.0
+    mfe_pips: float = 0.0
+    mae_pnl_usd: float = 0.0
+    mfe_pnl_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -677,6 +689,10 @@ class TradeView:
             "holding_minutes": float(self.holding_minutes),
             "fees_usd": float(self.fees_usd),
             "reason": self.reason,
+            "mae_pips": float(self.mae_pips),
+            "mfe_pips": float(self.mfe_pips),
+            "mae_pnl_usd": float(self.mae_pnl_usd),
+            "mfe_pnl_usd": float(self.mfe_pnl_usd),
         }
 
 
@@ -844,6 +860,10 @@ class _OpenPosition:
     trailing_stop_distance: float | None = None
     entry_fees_usd: float = 0.0
     bracket_order_ids: list[str] = field(default_factory=list)
+    mae_pips: float = 0.0
+    mfe_pips: float = 0.0
+    mae_pnl_usd: float = 0.0
+    mfe_pnl_usd: float = 0.0
 
 
 @dataclass
@@ -1182,6 +1202,7 @@ class BrokerEngine:
             raise RuntimeError("Broker API not initialized")
         session.broker_api._set_cycle_context(event_time, closed_timeframes)
         self._trail_stop_if_needed(session, event_time)
+        self._update_position_excursions(session)
 
     def _invoke_trader(self, session: _SessionState) -> None:
         raw_orders = session.trader.on_clock(session.broker_api)
@@ -1560,6 +1581,7 @@ class BrokerEngine:
 
         if float(order.quantity) < float(position.quantity) - 1e-12:
             position.quantity -= float(order.quantity)
+            # Partial reductions keep the same position lifecycle; a trade row is emitted only on final close.
             self._sync_bracket_quantities(session)
             return
 
@@ -1692,6 +1714,48 @@ class BrokerEngine:
             reason="trailing_stop_updated",
         )
 
+    def _update_position_excursions(self, session: _SessionState) -> None:
+        position = session.open_position
+        if position is None:
+            return
+
+        candle = self._execution_candle(session)
+        pip_value = float(get_pip_value(position.instrument))
+        if pip_value <= 0:
+            return
+
+        if position.side == "LONG":
+            favorable_price = float(candle.bid_high)
+            adverse_price = float(candle.bid_low)
+            favorable_pips = (favorable_price - position.avg_entry_price) / pip_value
+            adverse_pips = (adverse_price - position.avg_entry_price) / pip_value
+            favorable_quote = (favorable_price - position.avg_entry_price) * position.quantity
+            adverse_quote = (adverse_price - position.avg_entry_price) * position.quantity
+        else:
+            favorable_price = float(candle.ask_low)
+            adverse_price = float(candle.ask_high)
+            favorable_pips = (position.avg_entry_price - favorable_price) / pip_value
+            adverse_pips = (position.avg_entry_price - adverse_price) / pip_value
+            favorable_quote = (position.avg_entry_price - favorable_price) * position.quantity
+            adverse_quote = (position.avg_entry_price - adverse_price) * position.quantity
+
+        favorable_usd = self.conversions.to_usd(
+            position.instrument,
+            EXECUTION_TIMEFRAME,
+            favorable_quote,
+            candle.time_utc,
+        )
+        adverse_usd = self.conversions.to_usd(
+            position.instrument,
+            EXECUTION_TIMEFRAME,
+            adverse_quote,
+            candle.time_utc,
+        )
+        position.mfe_pips = max(float(position.mfe_pips), float(favorable_pips))
+        position.mae_pips = min(float(position.mae_pips), float(adverse_pips))
+        position.mfe_pnl_usd = max(float(position.mfe_pnl_usd), float(favorable_usd))
+        position.mae_pnl_usd = min(float(position.mae_pnl_usd), float(adverse_usd))
+
     def _position_stop_order(self, session: _SessionState, position: _OpenPosition) -> _OrderState | None:
         for order_id in position.bracket_order_ids:
             order = self._order_by_id(session, order_id)
@@ -1754,6 +1818,10 @@ class BrokerEngine:
                 realized_pips=float(realized_pips),
                 holding_minutes=float(hold_minutes),
                 fees_usd=float(position.entry_fees_usd + fill.commission_usd),
+                mae_pips=float(position.mae_pips),
+                mfe_pips=float(position.mfe_pips),
+                mae_pnl_usd=float(position.mae_pnl_usd),
+                mfe_pnl_usd=float(position.mfe_pnl_usd),
             )
         )
         self._emit_event(
@@ -1989,6 +2057,10 @@ class BrokerEngine:
             holding_minutes=float(record.holding_minutes),
             fees_usd=float(record.fees_usd),
             reason=record.reason,
+            mae_pips=float(record.mae_pips),
+            mfe_pips=float(record.mfe_pips),
+            mae_pnl_usd=float(record.mae_pnl_usd),
+            mfe_pnl_usd=float(record.mfe_pnl_usd),
         )
 
     def _emit_event(

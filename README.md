@@ -308,7 +308,7 @@ What each artifact is for:
 - `data_manifest.json`: which datasets were available and used
 - `orders.csv`: every accepted, rejected, canceled, and filled order, including rejection reasons
 - `fills.csv`: fill-by-fill execution records
-- `trades.csv`: closed-position records with realized USD PnL, realized pips, holding time, and fees
+- `trades.csv`: closed-position records with realized USD PnL, realized pips, holding time, fees, and per-trade `mae_*`/`mfe_*` in both pips and USD; excursion is measured from execution-bar bid/ask extremes, `mae_*` is signed adverse excursion (negative or zero), `mfe_*` is signed favorable excursion (positive or zero), and partial reductions do not emit separate trade rows
 - `equity_curve.csv`: account snapshots over time
 - per-strategy `summary.json`: strategy-level performance, trade counts, return, and risk metrics
 - per-strategy `report.md`: human-readable strategy report
