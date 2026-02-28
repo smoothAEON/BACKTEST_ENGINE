@@ -1,0 +1,20 @@
+{
+  "data_root": "../../data",
+  "report_dir": "../../reports/00_template_mit_tp_sl_trailing",
+  "strategies": [
+    {
+      "strategy_id": "template_demo",
+      "trader_class": "trader.py:TemplateMITTrader",
+      "instrument": "EUR_USD",
+      "timeframe": "H1",
+      "starting_balance_usd": 100000,
+      "leverage": 30,
+      "commission_usd_per_fill": 0.0,
+      "params": {
+        "quantity": 1000,
+        "stop_pips": 20,
+        "target_pips": 40
+      }
+    }
+  ]
+}
